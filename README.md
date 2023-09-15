@@ -85,5 +85,5 @@ Incoming messages should be shaped like so:
 Outgoing messages are shaped the same way.
 
 ## Todo
-- [ ] Fix channel names with ending params `channel.{id}`
+- [x] Fix channel names with ending params `channel.{id}`
 - [ ] Add more configuration for servers
