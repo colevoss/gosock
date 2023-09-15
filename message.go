@@ -2,13 +2,13 @@ package gosock
 
 import "encoding/json"
 
-const Join = "__join__"
-const BeforeJoin = "__before_join__"
+const JoinEventName = "__join__"
+const BeforeJoinEventName = "__before_join__"
 
-const Leave = "__leave__"
-const AfterLeave = "__after_leave__"
+const LeaveEventName = "__leave__"
+const AfterLeaveEventName = "__after_leave__"
 
-const Disconnect = "__disconnect__"
+const DisconnectEventName = "__disconnect__"
 
 type Message struct {
 	Channel string `json:"channel"`
@@ -29,7 +29,7 @@ func (bm *Message) BindPayload(p interface{}) error {
 }
 
 func (bm *Message) IsJsoin() bool {
-	return bm.Event == Join
+	return bm.Event == JoinEventName
 }
 
 type Response struct {

@@ -9,11 +9,27 @@ import (
 	"github.com/gobwas/ws/wsutil"
 )
 
+type chanMessageType int
+
+const (
+	sendType chanMessageType = iota
+	broadcastType
+	replyType
+)
+
+type channelMessage struct {
+	conn    *Conn
+	msg     []byte
+	msgType chanMessageType
+	r       *Response
+}
+
 type Channel struct {
 	Path        string
 	Params      *Params
 	Connections *ConnectionMap
 	router      *Router
+	send        chan *channelMessage
 }
 
 func NewChannel(path string, params *Params, router *Router) *Channel {
@@ -22,43 +38,58 @@ func NewChannel(path string, params *Params, router *Router) *Channel {
 		Params:      params,
 		Connections: NewConnectionMap(),
 		router:      router,
+		send:        make(chan *channelMessage, 1),
 	}
 }
 
 func (c *Channel) Reply(conn *Conn, event string, payload interface{}) {
+	var buf bytes.Buffer
+	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
+	encoder := json.NewEncoder(w)
+
 	response := &Response{
 		Channel: c.Path,
 		Event:   event,
 		Payload: payload,
 	}
 
-	conn.Send(response)
+	if err := encoder.Encode(response); err != nil {
+		return
+	}
+
+	if err := w.Flush(); err != nil {
+		return
+	}
+
+	chanMessage := &channelMessage{
+		conn:    conn,
+		msgType: replyType,
+		msg:     buf.Bytes(),
+	}
+
+	c.send <- chanMessage
 }
 
 func (c *Channel) ReplyErr(conn *Conn, err error) {
-	resp := &Response{
-		Channel: c.Path,
-		Event:   "error",
-		Payload: M{
-			"error": err.Error(),
-		},
-	}
+	// resp := &Response{
+	// 	Channel: c.Path,
+	// 	Event:   "error",
+	// 	Payload: M{
+	// 		"error": err.Error(),
+	// 	},
+	// }
 
-	conn.Send(resp)
-}
+	c.Reply(conn, "error", M{
+		"error": err.Error(),
+	})
 
-func (c *Channel) BroadcastOld(conn *Conn, event string, payload interface{}) {
-	response := &Response{
-		Channel: c.Path,
-		Event:   event,
-		Payload: payload,
-	}
+	// chanMessage := &channelMessage{
+	//   conn: conn,
+	//   msgType: replyType,
+	//   msg: buf.Bytes(),
+	// }
 
-	for connection, ok := range c.Connections.connections {
-		if ok && connection != conn {
-			connection.Send(response)
-		}
-	}
+	// conn.Send(resp)
 }
 
 func (c *Channel) Broadcast(conn *Conn, event string, payload interface{}) {
@@ -80,36 +111,92 @@ func (c *Channel) Broadcast(conn *Conn, event string, payload interface{}) {
 		return
 	}
 
-	for connection, ok := range c.Connections.connections {
-		if ok && connection != conn {
-			connection.sendRaw <- buf.Bytes()
-		}
+	chanMessage := &channelMessage{
+		conn:    conn,
+		msgType: broadcastType,
+		msg:     buf.Bytes(),
+		r:       response,
 	}
+
+	c.send <- chanMessage
 }
 
 func (c *Channel) Send(event string, payload interface{}) {
+	var buf bytes.Buffer
+	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
+	encoder := json.NewEncoder(w)
+
 	response := &Response{
 		Channel: c.Path,
 		Event:   event,
 		Payload: payload,
 	}
 
-	for connection, ok := range c.Connections.connections {
-		if ok {
-			connection.Send(response)
+	if err := encoder.Encode(response); err != nil {
+		return
+	}
+
+	if err := w.Flush(); err != nil {
+		return
+	}
+
+	chanMessage := &channelMessage{
+		msgType: sendType,
+		msg:     buf.Bytes(),
+		r:       response,
+	}
+
+	c.send <- chanMessage
+}
+
+func (c *Channel) writer() {
+	for msg := range c.send {
+		msgPayload := msg.msg
+		msgConn := msg.conn
+
+		if msg.msgType == replyType {
+			c.router.hub.pool.Schedule(func() {
+				log.Printf("Sending msg to %s", msgConn.Id)
+				msgConn.SendRaw(msgPayload)
+			})
+			// msgConn.SendRaw(msgPayload)
+			continue
+		}
+
+		c.Connections.Lock()
+		connections := c.Connections.connections
+		c.Connections.Unlock()
+
+	connWalk:
+		for conn, ok := range connections {
+			if !ok {
+				continue connWalk
+			}
+
+			if msg.msgType == broadcastType && conn == msgConn {
+				log.Printf("Not broadcasting to %s", conn.Id)
+				continue connWalk
+			}
+
+			// For closure
+			sendConn := conn
+			c.router.hub.pool.Schedule(func() {
+				log.Printf("!!!!!Sending msg to %s", sendConn.Id)
+				sendConn.SendRaw(msgPayload)
+			})
 		}
 	}
 }
 
 func (c *Channel) handleJoin(conn *Conn, msg *Message) {
-	joinHandler, hasJoin := c.router.Handlers[Join]
+	joinHandler, hasJoin := c.router.Handlers[JoinEventName]
 
 	if !hasJoin {
 		log.Printf("Channel %s has no join handler", c.router.Path)
 		return
 	}
 
-	beforeJoin, hasBeforeJoin := c.router.Handlers[BeforeJoin]
+	beforeJoin, hasBeforeJoin := c.router.Handlers[BeforeJoinEventName]
 
 	if hasBeforeJoin {
 		err := beforeJoin(c, conn, msg)
@@ -130,7 +217,7 @@ func (c *Channel) handleJoin(conn *Conn, msg *Message) {
 }
 
 func (c *Channel) handleLeave(conn *Conn, msg *Message) {
-	leavehandler, hasLeave := c.router.Handlers[Leave]
+	leavehandler, hasLeave := c.router.Handlers[LeaveEventName]
 
 	if hasLeave {
 		leavehandler(c, conn, msg)
@@ -140,7 +227,7 @@ func (c *Channel) handleLeave(conn *Conn, msg *Message) {
 }
 
 func (c *Channel) handleDisconnect(conn *Conn) {
-	handler, ok := c.router.Handlers[Disconnect]
+	handler, ok := c.router.Handlers[DisconnectEventName]
 
 	if ok {
 		handler(c, conn, nil)

@@ -50,23 +50,18 @@ func (mc *MyChannel) Chat(c *gosock.Channel, conn *gosock.Conn, msg *gosock.Mess
   return nil
 }
 
-// Channel must implement RouterRegister interface
-// Here is where you register events on the channel for the event string
-func (mc *MyChannel) Register(c *gosock.Router) {
-  // Join is a reserved event name
-  c.Event(gosock.Join, mc.Join)
-
-  // Register events to their event name
-  c.Event("new-chat", mc.Chat)
-}
-
 func main() {
   mc := &MyChannel{}
   server := gosock.NewHub()
 
   // Register channel for path
   // Channel paths can can contain named params in {curlyBrackets}
-  server.Channel("channel.{id}.chat", mc)
+  server.Channel("channel.{id}.chat", func(r *Router) {
+    r.On(gosock.Join(mc.Join))
+
+    // Custom event handlers
+    r.Event("new-chat", mc.Chat)
+  })
 
   // Start server
   server.Start()

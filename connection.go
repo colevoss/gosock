@@ -15,6 +15,7 @@ var connId = 0
 
 type Conn struct {
 	Id string
+	sync.RWMutex
 
 	conn    net.Conn
 	send    chan *Response
@@ -53,7 +54,6 @@ func (c *Conn) Close() {
 
 func (c *Conn) Read() {
 	defer c.Close()
-	log.Printf("Starting reader %s", c.Id)
 
 	reader := wsutil.NewReader(c.conn, ws.StateServerSide)
 	decoder := json.NewDecoder(reader)
@@ -65,8 +65,6 @@ func (c *Conn) Read() {
 			log.Printf("Error reading client data %v", err)
 			return
 		}
-
-		log.Printf("Next frame read")
 
 		if hdr.OpCode == ws.OpClose {
 			log.Printf("Closing code received %s", c.Id)
@@ -85,8 +83,6 @@ func (c *Conn) Read() {
 }
 
 func (c *Conn) Write() {
-	log.Printf("Starting writer %s", c.Id)
-
 	writer := wsutil.NewWriter(c.conn, ws.StateServerSide, ws.OpText)
 	encoder := json.NewEncoder(writer)
 
@@ -126,8 +122,20 @@ func (c *Conn) Write() {
 	}
 }
 
+// Deprecated
 func (c *Conn) Send(resp *Response) {
 	c.send <- resp
+}
+
+func (c *Conn) SendRaw(msg []byte) {
+	c.Lock()
+	defer c.Unlock()
+
+	_, err := c.conn.Write(msg)
+
+	if err != nil {
+		log.Printf("Error sending raw message %s", err)
+	}
 }
 
 type ConnectionMap struct {

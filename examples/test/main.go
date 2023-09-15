@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/colevoss/gosock"
 )
@@ -29,7 +31,7 @@ func (tr *TestRouter) Join(c *gosock.Channel, conn *gosock.Conn, msg *gosock.Mes
 	})
 
 	c.Reply(conn, "welcome", gosock.M{
-		"message": "Welcome to the channel",
+		"message": fmt.Sprintf("Welcome to the channel %s", conn.Id),
 	})
 
 	return nil
@@ -38,17 +40,7 @@ func (tr *TestRouter) Join(c *gosock.Channel, conn *gosock.Conn, msg *gosock.Mes
 func (tr *TestRouter) BeforeJoin(c *gosock.Channel, conn *gosock.Conn, msg *gosock.Message) error {
 	log.Printf("BEFORE JOIN")
 
-	// return fmt.Errorf("BAD THINGS %s", "yeah")
-
 	return nil
-}
-
-func (tr *TestRouter) Register(c *gosock.Router) {
-	c.Event(gosock.BeforeJoin, tr.BeforeJoin)
-	c.Event(gosock.Join, tr.Join)
-	c.Event(gosock.Leave, tr.Leave)
-	c.Event(gosock.Disconnect, tr.Disconnect)
-	c.Event("my_event", tr.MyEvent)
 }
 
 func (tr *TestRouter) MyEvent(c *gosock.Channel, conn *gosock.Conn, msg *gosock.Message) error {
@@ -93,8 +85,26 @@ func OnConnect(conn *gosock.Conn) {
 
 func main() {
 	tr := &TestRouter{}
-	server := gosock.NewHub()
-	server.Channel("test.{param}.hello", tr)
+	pool := gosock.NewPool(1, 1, time.Second*60)
+
+	pool.Handle(gosock.PoolOpen(func(id int) {
+		log.Printf("Opening worker pool: %d", id)
+	}))
+
+	pool.Handle(gosock.PoolClose(func(id int) {
+		log.Printf("Closing worker pool: %d", id)
+	}))
+	server := gosock.NewHub(pool)
+
+	server.Channel("test.{param}", func(r *gosock.Router) {
+		r.On(
+			gosock.Join(tr.Join),
+			gosock.Leave(tr.Leave),
+			gosock.Disconnect(tr.Disconnect),
+		)
+
+		r.Event("my_event", tr.MyEvent)
+	})
 
 	server.On(gosock.Connect, OnConnect)
 

@@ -114,7 +114,7 @@ walk:
 				params = &Params{}
 			}
 
-			params.Add(root.GetParamName(), val)
+			params.Add(root.getParamName(), val)
 		} else {
 			i := findLongestCommonPrefix(root.Path, key)
 
@@ -132,20 +132,20 @@ walk:
 		// I think we need this.
 		// If key is used up and we aren't on a leaf
 		// we shouldn't continue
-		// if len(key) == 0 {
-		// 	return root, params
-		// }
+		if len(key) == 0 {
+			return root, params
+		}
 
 		for _, child := range root.Children {
-			if child.IsParam() || child.Path[0] == key[0] {
+			if child.IsParam() {
 				root = child
 				continue walk
 			}
-			//
-			// if child.Path[0] == key[0] {
-			// 	root = child
-			// 	continue walk
-			// }
+
+			if child.Path[0] == key[0] {
+				root = child
+				continue walk
+			}
 		}
 
 		// If we have gotten this far then there is not match in any of the children
@@ -171,7 +171,7 @@ func (n *Node) IsLeaf() bool {
 	return false
 }
 
-func BetterGetParam(path string) (start int, end int, paramName string) {
+func getParam(path string) (start int, end int, paramName string) {
 	paramName = ""
 
 	for start, c := range []byte(path) {
@@ -194,7 +194,7 @@ func BetterGetParam(path string) (start int, end int, paramName string) {
 	return -1, -1, paramName
 }
 
-func (n *Node) GetParamName() string {
+func (n *Node) getParamName() string {
 	if !n.IsParam() {
 		return ""
 	}
@@ -202,60 +202,12 @@ func (n *Node) GetParamName() string {
 	return n.Path[1 : len(n.Path)-1]
 }
 
-func GetParam(path string) (start int, end int, paramName string) {
-	for start, c := range []byte(path) {
-		// Should not start looking for a wildcard
-		if c != '.' {
-			continue
-		}
-
-		// else check if {wildcard} starts
-
-		paramStarted := false
-		paramName := ""
-		paramEnded := false
-
-		for end, wildCardStarter := range []byte(path[start+1:]) {
-			if !paramStarted && wildCardStarter == '{' {
-				paramStarted = true
-				continue
-			}
-
-			if paramStarted && wildCardStarter == '}' {
-				if len(paramName) == 0 {
-					panic("Param must have a name")
-				}
-
-				paramEnded = true
-				continue
-			}
-
-			if paramEnded {
-				// Param has ended so make sure it ends with a period
-				if wildCardStarter == '.' {
-					return start, start + end + 1, paramName
-				}
-
-				// Param is not valid if not followed by a .
-				// Probably return a `valid` return argument instead of panicing
-				panic("Param must be entire segment of path")
-			}
-
-			paramName = paramName + string(wildCardStarter)
-		}
-
-		return start, len(path), paramName
-	}
-
-	return -1, -1, ""
-}
-
 func (n *Node) add(path string, mc *Router) {
 	root := n
 	key := path
 
 	for {
-		start, end, param := BetterGetParam(key)
+		start, end, param := getParam(key)
 
 		if start < 0 {
 			break
@@ -287,6 +239,11 @@ func (n *Node) add(path string, mc *Router) {
 
 			continue
 		}
+	}
+
+	if len(key) == 0 {
+		root.Channel = mc
+		return
 	}
 
 	node := &Node{

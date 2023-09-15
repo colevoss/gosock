@@ -1,10 +1,16 @@
 package gosock
 
 import (
+	"log"
 	"testing"
+	"time"
 )
 
 type TestRouter struct {
+}
+
+func makeHub() *Hub {
+	return NewHub(NewPool(1, 1, time.Second))
 }
 
 func (tr *TestRouter) Join(c *Channel)          {}
@@ -29,7 +35,7 @@ func TestLookup(t *testing.T) {
 	}
 
 	for _, data := range tests {
-		mc := NewRouter(data.testPath)
+		mc := NewRouter(data.testPath, makeHub())
 		tree.Add(data.path, mc)
 	}
 
@@ -66,7 +72,7 @@ func TestLookup(t *testing.T) {
 func TestLookupMultiParam(t *testing.T) {
 	tree := NewTree()
 
-	router := NewRouter("test")
+	router := NewRouter("test", makeHub())
 
 	tree.Add("test.{paramone}.multi.{paramtwo}.param", router)
 
@@ -86,12 +92,37 @@ func TestLookupMultiParam(t *testing.T) {
 	if paramTwo != "2" {
 		t.Errorf("Param two should equal 1. Got %s", paramTwo)
 	}
+
+	log.Printf("%s %s", paramOne, paramTwo)
+}
+
+func TestEndingParam(t *testing.T) {
+	tree := NewTree()
+	router := NewRouter("test", makeHub())
+
+	tree.Add("test.{param}", router)
+
+	_, params := tree.Lookup("test.1")
+
+	if params == nil {
+		t.Errorf("Params should not be nil")
+	}
+
+	param, ok := params.Get("param")
+
+	if !ok {
+		t.Errorf("Param %s should not be nil", "param")
+	}
+
+	if param != "1" {
+		t.Errorf("Param should equal 1. Got %s", param)
+	}
 }
 
 func TestLookupNotFound(t *testing.T) {
 	tree := NewTree()
 
-	mc := NewRouter("test")
+	mc := NewRouter("test", makeHub())
 
 	tree.Add("test", mc)
 	tree.Add("test_another", mc)
@@ -111,7 +142,7 @@ func TestLookupNotFound(t *testing.T) {
 
 func BenchmarkLookupNoParams(b *testing.B) {
 	tree := NewTree()
-	mc := NewRouter("test")
+	mc := NewRouter("test", makeHub())
 
 	paths := []string{
 		"test",
@@ -149,7 +180,7 @@ func BenchmarkLookupNoParams(b *testing.B) {
 
 func BenchmarkLookupWithParams(b *testing.B) {
 	tree := NewTree()
-	router := NewRouter("test")
+	router := NewRouter("test", makeHub())
 
 	paths := []string{
 		"test",

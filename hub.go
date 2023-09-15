@@ -19,16 +19,17 @@ type Hub struct {
 	disconnect chan *Conn
 
 	handlers map[string]ConnectionHandler
+	pool     *Pool
 }
 
-func NewHub() *Hub {
+func NewHub(pool *Pool) *Hub {
 	return &Hub{
 		Channels:    NewTree(),
 		Connections: NewConnectionMap(),
 		connect:     make(chan *Conn),
 		disconnect:  make(chan *Conn),
-
-		handlers: make(map[string]ConnectionHandler),
+		handlers:    make(map[string]ConnectionHandler),
+		pool:        pool,
 	}
 }
 
@@ -44,13 +45,10 @@ func (h *Hub) On(event string, handler ConnectionHandler) {
 	h.handlers[event] = handler
 }
 
-func (h *Hub) Channel(path string, channel RouterRegister) {
-	log.Printf("Adding channel to hub: %s", path)
-
-	meta := NewRouter(path)
-	channel.Register(meta)
-
-	h.Channels.Add(path, meta)
+func (h *Hub) Channel(path string, handler func(*Router)) {
+	router := NewRouter(path, h)
+	handler(router)
+	h.Channels.Add(path, router)
 }
 
 func (h *Hub) Run() {
@@ -59,12 +57,10 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case c := <-h.connect:
-			log.Printf("Registering connection %s", c.Id)
 			h.Connections.Add(c)
 			h.handleConnect(c)
 
 		case c := <-h.disconnect:
-			log.Printf("Deregistering connection %s", c.Id)
 			h.Connections.Del(c)
 		}
 	}
@@ -93,15 +89,14 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 	channel, ok := metaChannel.Channels[msg.Channel]
 
 	if !ok {
-		log.Printf("Channel not created yet")
 		channel = metaChannel.addChannel(msg.Channel, params)
 	}
 
 	switch msg.Event {
-	case Join:
+	case JoinEventName:
 		channel.handleJoin(conn, msg)
 
-	case Leave:
+	case LeaveEventName:
 		channel.handleLeave(conn, msg)
 
 	default:
@@ -122,8 +117,6 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 }
 
 func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Connection recieved")
-
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 
 	if err != nil {
@@ -133,10 +126,8 @@ func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
 
 	c := NewConn(conn, h)
 
-	log.Printf("Connection upgrade successful %s", c.Id)
-
 	h.connect <- c
 
 	go c.Read()
-	go c.Write()
+	// go c.Write()
 }
