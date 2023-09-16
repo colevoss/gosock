@@ -97,13 +97,6 @@ func main() {
 	tr := &TestRouter{}
 	pool := gosock.NewPool(1, 1, time.Second*60)
 
-	pool.Handle(gosock.PoolOpen(func(id int) {
-		log.Printf("Opening worker pool: %d", id)
-	}))
-
-	pool.Handle(gosock.PoolClose(func(id int) {
-		log.Printf("Closing worker pool: %d", id)
-	}))
 	server := gosock.NewHub(pool)
 
 	server.Channel("test.{param}", func(r *gosock.Router) {
