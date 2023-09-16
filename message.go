@@ -2,18 +2,17 @@ package gosock
 
 import "encoding/json"
 
-const JoinEventName = "__join__"
-const BeforeJoinEventName = "__before_join__"
-
-const LeaveEventName = "__leave__"
-const AfterLeaveEventName = "__after_leave__"
-
-const DisconnectEventName = "__disconnect__"
+const (
+	joinEventName       = "__join__"
+	beforeJoinEventName = "__before_join__"
+	leaveEventName      = "__leave__"
+	afterLeaveEventName = "__after_leave__"
+	disconnectEventName = "__disconnect__"
+)
 
 type Message struct {
-	Channel string `json:"channel"`
-	Event   string `json:"event"`
-	// Payload map[string]interface{} `json:"payload"`
+	Channel string          `json:"channel"`
+	Event   string          `json:"event"`
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -26,10 +25,6 @@ func (bm *Message) RawPayload() (map[string]interface{}, error) {
 
 func (bm *Message) BindPayload(p interface{}) error {
 	return json.Unmarshal(bm.Payload, p)
-}
-
-func (bm *Message) IsJsoin() bool {
-	return bm.Event == JoinEventName
 }
 
 type Response struct {

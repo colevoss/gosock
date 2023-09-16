@@ -1,7 +1,6 @@
 package gosock
 
 import (
-	"log"
 	"time"
 )
 
@@ -66,7 +65,6 @@ func (p *Pool) open(id int) {
 }
 
 func (p *Pool) Schedule(task PoolTask) {
-	log.Printf("Scheduling task")
 	select {
 	// If we can aquire the semaphore
 	case p.sem <- struct{}{}:

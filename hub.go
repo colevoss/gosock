@@ -13,20 +13,21 @@ type ConnectionHandler func(conn *Conn)
 type ServerEventInit func(hub *Hub)
 
 type Hub struct {
-	Channels    *Node // value is meta channels
-	Connections *ConnectionMap
+	pool *Pool
+
+	channels    *Node // value is meta channels
+	connections *ConnectionMap
 
 	connect    chan *Conn
 	disconnect chan *Conn
 
 	handlers map[string]ConnectionHandler
-	pool     *Pool
 }
 
 func NewHub(pool *Pool) *Hub {
 	return &Hub{
-		Channels:    NewTree(),
-		Connections: NewConnectionMap(),
+		channels:    NewTree(),
+		connections: newConnectionMap(),
 		connect:     make(chan *Conn),
 		disconnect:  make(chan *Conn),
 		handlers:    make(map[string]ConnectionHandler),
@@ -34,10 +35,16 @@ func NewHub(pool *Pool) *Hub {
 	}
 }
 
+func Connect(handler ConnectionHandler) ServerEventInit {
+	return func(h *Hub) {
+		h.handlers[ConnectEventName] = handler
+	}
+}
+
 func (h *Hub) Start() {
 	log.Printf("Starting Hub Server")
 
-	go h.Run()
+	go h.run()
 
 	http.ListenAndServe(":8080", http.HandlerFunc(h.handler))
 }
@@ -50,29 +57,21 @@ func (h *Hub) On(s ...ServerEventInit) *Hub {
 	return h
 }
 
-func Connect(handler ConnectionHandler) ServerEventInit {
-	return func(h *Hub) {
-		h.handlers[ConnectEventName] = handler
-	}
-}
-
 func (h *Hub) Channel(path string, handler func(*Router)) {
 	router := NewRouter(path, h)
 	handler(router)
-	h.Channels.Add(path, router)
+	h.channels.Add(path, router)
 }
 
-func (h *Hub) Run() {
-	log.Printf("Starting Hub")
-
+func (h *Hub) run() {
 	for {
 		select {
 		case c := <-h.connect:
-			h.Connections.Add(c)
+			h.connections.add(c)
 			h.handleConnect(c)
 
 		case c := <-h.disconnect:
-			h.Connections.Del(c)
+			h.connections.del(c)
 		}
 	}
 }
@@ -88,8 +87,7 @@ func (h *Hub) handleConnect(conn *Conn) {
 }
 
 func (h *Hub) handleMessage(conn *Conn, msg *Message) {
-	h.Channels.Print()
-	node, params := h.Channels.Lookup(msg.Channel)
+	node, params := h.channels.Lookup(msg.Channel)
 
 	if node == nil || node.Channel == nil {
 		log.Printf("Channel not found %s", msg.Channel)
@@ -97,7 +95,7 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 	}
 
 	metaChannel := node.Channel
-	channel, ok := metaChannel.Channels[msg.Channel]
+	channel, ok := metaChannel.channels[msg.Channel]
 
 	if !ok {
 		channel = metaChannel.addChannel(msg.Channel, params)
@@ -105,22 +103,23 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 
 	ctx := withConnection(conn.ctx, conn)
 
+	// switch msg.Event {
 	switch msg.Event {
-	case JoinEventName:
+	case joinEventName:
 		channel.handleJoin(ctx, msg)
 
-	case LeaveEventName:
+	case leaveEventName:
 		channel.handleLeave(ctx, msg)
 
 	default:
-		handler, ok := metaChannel.Handlers[msg.Event]
+		handler, ok := metaChannel.handlers[msg.Event]
 
 		if !ok {
 			log.Printf("Channel does not have handler for event %s", msg.Event)
 			return
 		}
 
-		if hasConn := channel.Connections.Has(conn); !hasConn {
+		if hasConn := channel.connections.has(conn); !hasConn {
 			log.Printf("Connection %s does not exist in channel %s", conn.Id, msg.Channel)
 			return
 		}
@@ -139,10 +138,9 @@ func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	c := NewConn(ctx, conn, h)
+	c := newConn(ctx, conn, h)
 
 	h.connect <- c
 
-	go c.Read()
-	// go c.Write()
+	go c.read()
 }

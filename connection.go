@@ -18,30 +18,12 @@ type Conn struct {
 	Id string
 	sync.RWMutex
 
-	conn    net.Conn
-	send    chan *Response
-	sendRaw chan []byte
-	hub     *Hub
+	conn net.Conn
+	hub  *Hub
 
 	channels map[*Channel]bool
 
 	ctx context.Context
-}
-
-func NewConn(ctx context.Context, conn net.Conn, hub *Hub) *Conn {
-	connection := &Conn{
-		ctx:      ctx,
-		Id:       fmt.Sprintf("conn-%d", connId),
-		conn:     conn,
-		send:     make(chan *Response),
-		sendRaw:  make(chan []byte),
-		hub:      hub,
-		channels: make(map[*Channel]bool),
-	}
-
-	connId++
-
-	return connection
 }
 
 func (c *Conn) Context() context.Context {
@@ -52,7 +34,21 @@ func (c *Conn) Context() context.Context {
 	return context.Background()
 }
 
-func (c *Conn) Close() {
+func newConn(ctx context.Context, conn net.Conn, hub *Hub) *Conn {
+	connection := &Conn{
+		ctx:      ctx,
+		Id:       fmt.Sprintf("conn-%d", connId),
+		conn:     conn,
+		hub:      hub,
+		channels: make(map[*Channel]bool),
+	}
+
+	connId++
+
+	return connection
+}
+
+func (c *Conn) close() {
 	log.Printf("Closing connection %s", c.Id)
 	c.conn.Close()
 
@@ -60,7 +56,6 @@ func (c *Conn) Close() {
 		ch.handleDisconnect(c)
 	}
 
-	close(c.send)
 	c.hub.disconnect <- c
 }
 
@@ -73,8 +68,8 @@ func (c *Conn) WithContext(ctx context.Context) *Conn {
 	return c
 }
 
-func (c *Conn) Read() {
-	defer c.Close()
+func (c *Conn) read() {
+	defer c.close()
 
 	reader := wsutil.NewReader(c.conn, ws.StateServerSide)
 	decoder := json.NewDecoder(reader)
@@ -109,52 +104,7 @@ func (c *Conn) Read() {
 	}
 }
 
-func (c *Conn) Write() {
-	writer := wsutil.NewWriter(c.conn, ws.StateServerSide, ws.OpText)
-	encoder := json.NewEncoder(writer)
-
-	for {
-		select {
-		case msg, open := <-c.send:
-			if !open {
-				log.Printf("Closing writer %s", c.Id)
-				return
-			}
-
-			if err := encoder.Encode(&msg); err != nil {
-				log.Printf("Error encoding response data %v", err)
-				return
-			}
-
-			log.Printf("Message decoded successfully")
-
-			if err := writer.Flush(); err != nil {
-				log.Printf("Error flushing writer %v", err)
-				return
-			}
-
-		case msg, open := <-c.sendRaw:
-			if !open {
-				log.Printf("Closing raw writer %s", c.Id)
-				return
-			}
-
-			_, err := c.conn.Write(msg)
-
-			if err != nil {
-				log.Printf("Error sending raw message %s", err)
-				return
-			}
-		}
-	}
-}
-
-// Deprecated
-func (c *Conn) Send(resp *Response) {
-	c.send <- resp
-}
-
-func (c *Conn) SendRaw(msg []byte) {
+func (c *Conn) sendRaw(msg []byte) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -173,27 +123,27 @@ type ConnectionMap struct {
 	unregister chan *Conn
 }
 
-func NewConnectionMap() *ConnectionMap {
+func newConnectionMap() *ConnectionMap {
 	return &ConnectionMap{
 		connections: make(map[*Conn]bool),
 	}
 }
 
-func (cm *ConnectionMap) Add(conn *Conn) {
+func (cm *ConnectionMap) add(conn *Conn) {
 	cm.Lock()
 	defer cm.Unlock()
 
 	cm.connections[conn] = true
 }
 
-func (cm *ConnectionMap) Del(conn *Conn) {
+func (cm *ConnectionMap) del(conn *Conn) {
 	cm.Lock()
 	defer cm.Unlock()
 
 	delete(cm.connections, conn)
 }
 
-func (cm *ConnectionMap) Has(conn *Conn) bool {
+func (cm *ConnectionMap) has(conn *Conn) bool {
 	cm.Lock()
 	defer cm.Unlock()
 

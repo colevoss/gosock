@@ -26,18 +26,19 @@ type channelMessage struct {
 }
 
 type Channel struct {
-	Path        string
-	Params      *Params
-	Connections *ConnectionMap
+	Path   string
+	Params *Params
+
+	connections *ConnectionMap
 	router      *Router
 	send        chan *channelMessage
 }
 
-func NewChannel(path string, params *Params, router *Router) *Channel {
+func newChannel(path string, params *Params, router *Router) *Channel {
 	return &Channel{
 		Path:        path,
 		Params:      params,
-		Connections: NewConnectionMap(),
+		connections: newConnectionMap(),
 		router:      router,
 		send:        make(chan *channelMessage, 1),
 	}
@@ -153,14 +154,14 @@ func (c *Channel) writer() {
 
 		if msg.msgType == replyType && msgConn != nil {
 			c.router.hub.pool.Schedule(func() {
-				msgConn.SendRaw(msgPayload)
+				msgConn.sendRaw(msgPayload)
 			})
 			continue
 		}
 
-		c.Connections.Lock()
-		connections := c.Connections.connections
-		c.Connections.Unlock()
+		c.connections.Lock()
+		connections := c.connections.connections
+		c.connections.Unlock()
 
 	connWalk:
 		for conn, ok := range connections {
@@ -169,15 +170,13 @@ func (c *Channel) writer() {
 			}
 
 			if msg.msgType == broadcastType && conn == msgConn {
-				log.Printf("Not broadcasting to %s", conn.Id)
 				continue connWalk
 			}
 
 			// For closure
 			sendConn := conn
 			c.router.hub.pool.Schedule(func() {
-				log.Printf("!!!!!Sending msg to %s", sendConn.Id)
-				sendConn.SendRaw(msgPayload)
+				sendConn.sendRaw(msgPayload)
 			})
 		}
 	}
@@ -190,14 +189,14 @@ func (c *Channel) handleJoin(ctx context.Context, msg *Message) {
 		return
 	}
 
-	joinHandler, hasJoin := c.router.Handlers[JoinEventName]
+	joinHandler, hasJoin := c.router.routerHandlers[joinEventName]
 
 	if !hasJoin {
-		log.Printf("Channel %s has no join handler", c.router.Path)
+		log.Printf("Channel %s has no join handler", c.router.path)
 		return
 	}
 
-	beforeJoin, hasBeforeJoin := c.router.Handlers[BeforeJoinEventName]
+	beforeJoin, hasBeforeJoin := c.router.routerHandlers[beforeJoinEventName]
 
 	ctx = withMessage(ctx, msg)
 
@@ -227,7 +226,7 @@ func (c *Channel) handleLeave(ctx context.Context, msg *Message) {
 		return
 	}
 
-	leavehandler, hasLeave := c.router.Handlers[LeaveEventName]
+	leavehandler, hasLeave := c.router.routerHandlers[leaveEventName]
 
 	if hasLeave {
 		ctx := withMessage(conn.ctx, msg)
@@ -238,7 +237,7 @@ func (c *Channel) handleLeave(ctx context.Context, msg *Message) {
 }
 
 func (c *Channel) handleDisconnect(conn *Conn) {
-	handler, ok := c.router.Handlers[DisconnectEventName]
+	handler, ok := c.router.routerHandlers[disconnectEventName]
 
 	if ok {
 		handler(conn.ctx, c)
@@ -248,13 +247,13 @@ func (c *Channel) handleDisconnect(conn *Conn) {
 }
 
 func (c *Channel) addConnection(conn *Conn) {
-	c.Connections.Add(conn)
+	c.connections.add(conn)
 	conn.channels[c] = true
 }
 
 func (c *Channel) removeConnection(conn *Conn) {
 	log.Printf("Removing conn %s from channel %s", conn.Id, c.Path)
-	c.Connections.Del(conn)
+	c.connections.del(conn)
 	conn.channels[c] = false
 	delete(conn.channels, c)
 }

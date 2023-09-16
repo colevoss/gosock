@@ -12,17 +12,20 @@ type RouterOnInit func(*Router)
 type Router struct {
 	sync.RWMutex
 	hub      *Hub
-	Path     string
-	Channels map[string]*Channel
-	Handlers map[string]EventHandler
+	path     string
+	channels map[string]*Channel
+	handlers map[string]EventHandler
+
+	routerHandlers map[string]EventHandler
 }
 
 func NewRouter(path string, hub *Hub) *Router {
 	return &Router{
-		Path:     path,
-		Channels: make(map[string]*Channel),
-		Handlers: make(map[string]EventHandler),
-		hub:      hub,
+		path:           path,
+		channels:       make(map[string]*Channel),
+		handlers:       make(map[string]EventHandler),
+		routerHandlers: make(map[string]EventHandler),
+		hub:            hub,
 	}
 }
 
@@ -36,44 +39,49 @@ func (r *Router) On(handlerInit ...RouterOnInit) *Router {
 
 func Join(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
-		router.Handlers[JoinEventName] = handler
+		// router.handlers[joinEventName] = handler
+		router.routerHandlers[joinEventName] = handler
 	}
 }
 
 func BeforeJoin(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
-		router.Handlers[BeforeJoinEventName] = handler
+		// router.handlers[beforeJoinEventName] = handler
+		router.routerHandlers[beforeJoinEventName] = handler
 	}
 }
 
 func AfterLeave(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
-		router.Handlers[AfterLeaveEventName] = handler
+		// router.handlers[afterLeaveEventName] = handler
+		router.routerHandlers[afterLeaveEventName] = handler
 	}
 }
 
 func Leave(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
-		router.Handlers[LeaveEventName] = handler
+		// router.handlers[leaveEventName] = handler
+		router.routerHandlers[leaveEventName] = handler
 	}
 }
 
 func Disconnect(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
-		router.Handlers[DisconnectEventName] = handler
+		router.handlers[disconnectEventName] = handler
+		router.routerHandlers[disconnectEventName] = handler
 	}
 }
 
 func (r *Router) Event(event string, handler EventHandler) {
-	r.Handlers[event] = handler
+	r.handlers[event] = handler
 }
 
 func (r *Router) addChannel(path string, params *Params) *Channel {
 	r.Lock()
 	defer r.Unlock()
 
-	channel := NewChannel(path, params, r)
-	r.Channels[path] = channel
+	channel := newChannel(path, params, r)
+	r.channels[path] = channel
 
 	go channel.writer()
 
