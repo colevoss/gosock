@@ -7,9 +7,10 @@ import (
 	"github.com/gobwas/ws"
 )
 
-const Connect = "__connect__"
+const ConnectEventName = "__connect__"
 
 type ConnectionHandler func(conn *Conn)
+type ServerEventInit func(hub *Hub)
 
 type Hub struct {
 	Channels    *Node // value is meta channels
@@ -41,8 +42,18 @@ func (h *Hub) Start() {
 	http.ListenAndServe(":8080", http.HandlerFunc(h.handler))
 }
 
-func (h *Hub) On(event string, handler ConnectionHandler) {
-	h.handlers[event] = handler
+func (h *Hub) On(s ...ServerEventInit) *Hub {
+	for _, initer := range s {
+		initer(h)
+	}
+
+	return h
+}
+
+func Connect(handler ConnectionHandler) ServerEventInit {
+	return func(h *Hub) {
+		h.handlers[ConnectEventName] = handler
+	}
 }
 
 func (h *Hub) Channel(path string, handler func(*Router)) {
@@ -67,7 +78,7 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) handleConnect(conn *Conn) {
-	handler, ok := h.handlers[Connect]
+	handler, ok := h.handlers[ConnectEventName]
 
 	if !ok {
 		return
@@ -92,12 +103,14 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 		channel = metaChannel.addChannel(msg.Channel, params)
 	}
 
+	ctx := withConnection(conn.ctx, conn)
+
 	switch msg.Event {
 	case JoinEventName:
-		channel.handleJoin(conn, msg)
+		channel.handleJoin(ctx, msg)
 
 	case LeaveEventName:
-		channel.handleLeave(conn, msg)
+		channel.handleLeave(ctx, msg)
 
 	default:
 		handler, ok := metaChannel.Handlers[msg.Event]
@@ -112,7 +125,8 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 			return
 		}
 
-		handler(channel, conn, msg)
+		ctx := withMessage(ctx, msg)
+		handler(ctx, channel)
 	}
 }
 
@@ -124,7 +138,8 @@ func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := NewConn(conn, h)
+	ctx := r.Context()
+	c := NewConn(ctx, conn, h)
 
 	h.connect <- c
 

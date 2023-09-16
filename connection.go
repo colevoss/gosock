@@ -1,6 +1,7 @@
 package gosock
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,10 +24,13 @@ type Conn struct {
 	hub     *Hub
 
 	channels map[*Channel]bool
+
+	ctx context.Context
 }
 
-func NewConn(conn net.Conn, hub *Hub) *Conn {
+func NewConn(ctx context.Context, conn net.Conn, hub *Hub) *Conn {
 	connection := &Conn{
+		ctx:      ctx,
 		Id:       fmt.Sprintf("conn-%d", connId),
 		conn:     conn,
 		send:     make(chan *Response),
@@ -40,6 +44,14 @@ func NewConn(conn net.Conn, hub *Hub) *Conn {
 	return connection
 }
 
+func (c *Conn) Context() context.Context {
+	if c.ctx != nil {
+		return c.ctx
+	}
+
+	return context.Background()
+}
+
 func (c *Conn) Close() {
 	log.Printf("Closing connection %s", c.Id)
 	c.conn.Close()
@@ -50,6 +62,15 @@ func (c *Conn) Close() {
 
 	close(c.send)
 	c.hub.disconnect <- c
+}
+
+func (c *Conn) WithContext(ctx context.Context) *Conn {
+	if ctx == nil {
+		panic("nil context")
+	}
+
+	c.ctx = ctx
+	return c
 }
 
 func (c *Conn) Read() {
@@ -71,6 +92,10 @@ func (c *Conn) Read() {
 			return
 		}
 
+		if hdr.OpCode == ws.OpPing {
+			log.Printf("PING")
+		}
+
 		var req Message
 
 		if err := decoder.Decode(&req); err != nil {
@@ -78,7 +103,9 @@ func (c *Conn) Read() {
 			return
 		}
 
-		go c.hub.handleMessage(c, &req)
+		c.hub.pool.Schedule(func() {
+			c.hub.handleMessage(c, &req)
+		})
 	}
 }
 

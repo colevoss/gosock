@@ -2,6 +2,7 @@ package gosock
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 
@@ -42,7 +43,13 @@ func NewChannel(path string, params *Params, router *Router) *Channel {
 	}
 }
 
-func (c *Channel) Reply(conn *Conn, event string, payload interface{}) {
+func (c *Channel) Reply(ctx context.Context, event string, payload interface{}) {
+	conn := GetConnection(ctx)
+
+	if conn == nil {
+		return
+	}
+
 	var buf bytes.Buffer
 	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
 	encoder := json.NewEncoder(w)
@@ -70,29 +77,19 @@ func (c *Channel) Reply(conn *Conn, event string, payload interface{}) {
 	c.send <- chanMessage
 }
 
-func (c *Channel) ReplyErr(conn *Conn, err error) {
-	// resp := &Response{
-	// 	Channel: c.Path,
-	// 	Event:   "error",
-	// 	Payload: M{
-	// 		"error": err.Error(),
-	// 	},
-	// }
-
-	c.Reply(conn, "error", M{
+func (c *Channel) ReplyErr(ctx context.Context, err error) {
+	c.Reply(ctx, "error", M{
 		"error": err.Error(),
 	})
-
-	// chanMessage := &channelMessage{
-	//   conn: conn,
-	//   msgType: replyType,
-	//   msg: buf.Bytes(),
-	// }
-
-	// conn.Send(resp)
 }
 
-func (c *Channel) Broadcast(conn *Conn, event string, payload interface{}) {
+func (c *Channel) Broadcast(ctx context.Context, event string, payload interface{}) {
+	conn := GetConnection(ctx)
+
+	if conn == nil {
+		return
+	}
+
 	var buf bytes.Buffer
 	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
 	encoder := json.NewEncoder(w)
@@ -154,12 +151,10 @@ func (c *Channel) writer() {
 		msgPayload := msg.msg
 		msgConn := msg.conn
 
-		if msg.msgType == replyType {
+		if msg.msgType == replyType && msgConn != nil {
 			c.router.hub.pool.Schedule(func() {
-				log.Printf("Sending msg to %s", msgConn.Id)
 				msgConn.SendRaw(msgPayload)
 			})
-			// msgConn.SendRaw(msgPayload)
 			continue
 		}
 
@@ -188,7 +183,13 @@ func (c *Channel) writer() {
 	}
 }
 
-func (c *Channel) handleJoin(conn *Conn, msg *Message) {
+func (c *Channel) handleJoin(ctx context.Context, msg *Message) {
+	conn := GetConnection(ctx)
+	if conn == nil {
+		log.Printf("No connection in ctx")
+		return
+	}
+
 	joinHandler, hasJoin := c.router.Handlers[JoinEventName]
 
 	if !hasJoin {
@@ -198,29 +199,39 @@ func (c *Channel) handleJoin(conn *Conn, msg *Message) {
 
 	beforeJoin, hasBeforeJoin := c.router.Handlers[BeforeJoinEventName]
 
+	ctx = withMessage(ctx, msg)
+
 	if hasBeforeJoin {
-		err := beforeJoin(c, conn, msg)
+		err := beforeJoin(ctx, c)
 
 		if err != nil {
-			c.ReplyErr(conn, err)
+			c.ReplyErr(ctx, err)
 			return
 		}
 	}
 
 	c.addConnection(conn)
 
-	err := joinHandler(c, conn, msg)
+	err := joinHandler(ctx, c)
 
 	if err != nil {
-		c.ReplyErr(conn, err)
+		c.ReplyErr(ctx, err)
 	}
 }
 
-func (c *Channel) handleLeave(conn *Conn, msg *Message) {
+func (c *Channel) handleLeave(ctx context.Context, msg *Message) {
+	conn := GetConnection(ctx)
+
+	if conn == nil {
+		log.Printf("No connection in context")
+		return
+	}
+
 	leavehandler, hasLeave := c.router.Handlers[LeaveEventName]
 
 	if hasLeave {
-		leavehandler(c, conn, msg)
+		ctx := withMessage(conn.ctx, msg)
+		leavehandler(ctx, c)
 	}
 
 	c.removeConnection(conn)
@@ -230,7 +241,7 @@ func (c *Channel) handleDisconnect(conn *Conn) {
 	handler, ok := c.router.Handlers[DisconnectEventName]
 
 	if ok {
-		handler(c, conn, nil)
+		handler(conn.ctx, c)
 	}
 
 	c.removeConnection(conn)

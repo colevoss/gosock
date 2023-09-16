@@ -1,15 +1,13 @@
 package gosock
 
 import (
+	"context"
 	"sync"
 )
 
-type EventHandler func(*Channel, *Conn, *Message) error
-type RouterOnInit func(*Router)
+type EventHandler func(context.Context, *Channel) error
 
-// type RouterRegister interface {
-// 	Register(*Router)
-// }
+type RouterOnInit func(*Router)
 
 type Router struct {
 	sync.RWMutex
@@ -71,7 +69,6 @@ func (r *Router) Event(event string, handler EventHandler) {
 }
 
 func (r *Router) addChannel(path string, params *Params) *Channel {
-	// Maybe lock this??
 	r.Lock()
 	defer r.Unlock()
 
