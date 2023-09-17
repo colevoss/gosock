@@ -26,18 +26,30 @@ type channelMessage struct {
 }
 
 type Channel struct {
-	Path   string
-	Params *Params
+	path   string
+	params *Params
 
 	connections *ConnectionMap
 	router      *Router
 	send        chan *channelMessage
 }
 
+func (c *Channel) Path() string {
+	return c.path
+}
+
+func (c *Channel) Params() *Params {
+	return c.params
+}
+
+func (c *Channel) Param(key string) (string, bool) {
+	return c.params.Get(key)
+}
+
 func newChannel(path string, params *Params, router *Router) *Channel {
 	return &Channel{
-		Path:        path,
-		Params:      params,
+		path:        path,
+		params:      params,
 		connections: newConnectionMap(),
 		router:      router,
 		send:        make(chan *channelMessage, 1),
@@ -56,7 +68,7 @@ func (c *Channel) Reply(ctx context.Context, event string, payload interface{}) 
 	encoder := json.NewEncoder(w)
 
 	response := &Response{
-		Channel: c.Path,
+		Channel: c.path,
 		Event:   event,
 		Payload: payload,
 	}
@@ -96,7 +108,7 @@ func (c *Channel) Broadcast(ctx context.Context, event string, payload interface
 	encoder := json.NewEncoder(w)
 
 	response := &Response{
-		Channel: c.Path,
+		Channel: c.path,
 		Event:   event,
 		Payload: payload,
 	}
@@ -119,13 +131,13 @@ func (c *Channel) Broadcast(ctx context.Context, event string, payload interface
 	c.send <- chanMessage
 }
 
-func (c *Channel) Send(event string, payload interface{}) {
+func (c *Channel) Emit(event string, payload interface{}) {
 	var buf bytes.Buffer
 	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
 	encoder := json.NewEncoder(w)
 
 	response := &Response{
-		Channel: c.Path,
+		Channel: c.path,
 		Event:   event,
 		Payload: payload,
 	}
@@ -252,7 +264,7 @@ func (c *Channel) addConnection(conn *Conn) {
 }
 
 func (c *Channel) removeConnection(conn *Conn) {
-	log.Printf("Removing conn %s from channel %s", conn.Id, c.Path)
+	log.Printf("Removing conn %s from channel %s", conn.Id, c.path)
 	c.connections.del(conn)
 	conn.channels[c] = false
 	delete(conn.channels, c)

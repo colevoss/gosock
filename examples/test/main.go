@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
 	"time"
 
 	"github.com/colevoss/gosock"
@@ -45,12 +46,12 @@ func (tr *TestRouter) BeforeJoin(ctx context.Context, c *gosock.Channel) error {
 }
 
 func (tr *TestRouter) MyEvent(ctx context.Context, c *gosock.Channel) error {
-	param, _ := c.Params.Get("param")
+	param, _ := c.Param("param")
 	userId := ctx.Value("userId").(int)
-	log.Printf("%d My event received on channel %s %s", userId, c.Path, param)
+	log.Printf("%d My event received on channel %s %s", userId, c.Path(), param)
 
 	payload := struct{ Hello string }{
-		Hello: "howdy",
+		Hello: fmt.Sprintf("Howdy %d", userId),
 	}
 
 	c.Broadcast(ctx, "message", payload)
@@ -93,23 +94,35 @@ func OnConnect(conn *gosock.Conn) {
 	conn.WithContext(ctx)
 }
 
+func UserIdMiddleware(h http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("MY MIDDLEWARE!!!!!!!!!!")
+		userId := rand.Intn(100)
+
+		log.Printf("on connect User ID: %d", userId)
+		ctx := context.WithValue(r.Context(), "userId", userId)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func main() {
 	tr := &TestRouter{}
 	pool := gosock.NewPool(1, 1, time.Second*60)
 
 	server := gosock.NewHub(pool)
 
+	server.Use(UserIdMiddleware)
+
 	server.Channel("test.{param}", func(r *gosock.Router) {
 		r.On(
-			gosock.Join(tr.Join),
-			gosock.Leave(tr.Leave),
-			gosock.Disconnect(tr.Disconnect),
+			r.Join(tr.Join),
+			r.Leave(tr.Leave),
+			r.Disconnect(tr.Disconnect),
 		)
 
 		r.Event("my_event", tr.MyEvent)
 	})
 
-	server.On(gosock.Connect(OnConnect))
-
 	server.Start()
+	http.ListenAndServe(":8080", server)
 }

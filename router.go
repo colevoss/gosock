@@ -37,35 +37,35 @@ func (r *Router) On(handlerInit ...RouterOnInit) *Router {
 	return r
 }
 
-func Join(handler EventHandler) RouterOnInit {
+func (r *Router) Join(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
 		// router.handlers[joinEventName] = handler
 		router.routerHandlers[joinEventName] = handler
 	}
 }
 
-func BeforeJoin(handler EventHandler) RouterOnInit {
+func (r *Router) BeforeJoin(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
 		// router.handlers[beforeJoinEventName] = handler
 		router.routerHandlers[beforeJoinEventName] = handler
 	}
 }
 
-func AfterLeave(handler EventHandler) RouterOnInit {
+func (r *Router) AfterLeave(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
 		// router.handlers[afterLeaveEventName] = handler
 		router.routerHandlers[afterLeaveEventName] = handler
 	}
 }
 
-func Leave(handler EventHandler) RouterOnInit {
+func (r *Router) Leave(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
 		// router.handlers[leaveEventName] = handler
 		router.routerHandlers[leaveEventName] = handler
 	}
 }
 
-func Disconnect(handler EventHandler) RouterOnInit {
+func (r *Router) Disconnect(handler EventHandler) RouterOnInit {
 	return func(router *Router) {
 		router.handlers[disconnectEventName] = handler
 		router.routerHandlers[disconnectEventName] = handler

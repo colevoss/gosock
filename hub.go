@@ -7,10 +7,11 @@ import (
 	"github.com/gobwas/ws"
 )
 
-const ConnectEventName = "__connect__"
+const connectEventName = "__connect__"
 
 type ConnectionHandler func(conn *Conn)
 type ServerEventInit func(hub *Hub)
+type Middleware func(http.HandlerFunc) http.HandlerFunc
 
 type Hub struct {
 	pool *Pool
@@ -21,32 +22,58 @@ type Hub struct {
 	connect    chan *Conn
 	disconnect chan *Conn
 
-	handlers map[string]ConnectionHandler
+	handlers    map[string]ConnectionHandler
+	middlewares []Middleware
+
+	handle http.HandlerFunc
 }
 
 func NewHub(pool *Pool) *Hub {
-	return &Hub{
+	hub := &Hub{
 		channels:    NewTree(),
 		connections: newConnectionMap(),
 		connect:     make(chan *Conn),
 		disconnect:  make(chan *Conn),
 		handlers:    make(map[string]ConnectionHandler),
 		pool:        pool,
+		middlewares: []Middleware{},
 	}
+
+	return hub
+}
+
+func (h *Hub) Use(middlewares ...Middleware) {
+	h.middlewares = append(h.middlewares, middlewares...)
 }
 
 func Connect(handler ConnectionHandler) ServerEventInit {
 	return func(h *Hub) {
-		h.handlers[ConnectEventName] = handler
+		h.handlers[connectEventName] = handler
 	}
 }
 
 func (h *Hub) Start() {
-	log.Printf("Starting Hub Server")
-
 	go h.run()
 
-	http.ListenAndServe(":8080", http.HandlerFunc(h.handler))
+	h.handle = h.wrapHandler()
+}
+
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.handle == nil {
+		panic("server handle is nil. Make sure server.start() is called")
+	}
+
+	h.handle.ServeHTTP(w, r)
+}
+
+func (h *Hub) wrapHandler() http.HandlerFunc {
+	wrapped := http.HandlerFunc(h.handler)
+
+	for i := len(h.middlewares) - 1; i >= 0; i-- {
+		wrapped = h.middlewares[i](wrapped)
+	}
+
+	return wrapped
 }
 
 func (h *Hub) On(s ...ServerEventInit) *Hub {
@@ -77,7 +104,7 @@ func (h *Hub) run() {
 }
 
 func (h *Hub) handleConnect(conn *Conn) {
-	handler, ok := h.handlers[ConnectEventName]
+	handler, ok := h.handlers[connectEventName]
 
 	if !ok {
 		return
