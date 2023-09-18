@@ -59,7 +59,7 @@ func (tr *TestRouter) MyEvent(ctx context.Context, c *gosock.Channel) error {
 	var msg Message
 
 	if err := gosock.BindPayload(ctx, &msg); err != nil {
-		log.Printf("FUCKING PAYLOAD %s", err)
+		log.Printf("PAYLOAD %s", err)
 	}
 
 	c.Broadcast(ctx, "message", gosock.M{
