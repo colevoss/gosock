@@ -110,7 +110,6 @@ walk:
 			key = key[end:]
 
 			if params == nil {
-				// TODO: pool params
 				params = &Params{}
 			}
 

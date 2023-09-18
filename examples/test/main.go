@@ -29,10 +29,12 @@ func (tr *TestRouter) Join(ctx context.Context, c *gosock.Channel) error {
 	userId := ctx.Value("userId").(int)
 
 	c.Broadcast(ctx, "user-joined", gosock.M{
-		"id": userId,
+		"id":  userId,
+		"msg": tp.Hello,
 	})
 
 	c.Reply(ctx, "welcome", gosock.M{
+		"id":      userId,
 		"message": fmt.Sprintf("Welcome to the channel %d", userId),
 	})
 
@@ -45,16 +47,29 @@ func (tr *TestRouter) BeforeJoin(ctx context.Context, c *gosock.Channel) error {
 	return nil
 }
 
+type Message struct {
+	Msg string `json:"message"`
+}
+
 func (tr *TestRouter) MyEvent(ctx context.Context, c *gosock.Channel) error {
 	param, _ := c.Param("param")
 	userId := ctx.Value("userId").(int)
-	log.Printf("%d My event received on channel %s %s", userId, c.Path(), param)
+	log.Printf("%d My event received on channel %s (%s)", userId, c.Path(), param)
 
-	payload := struct{ Hello string }{
-		Hello: fmt.Sprintf("Howdy %d", userId),
+	var msg Message
+
+	if err := gosock.BindPayload(ctx, &msg); err != nil {
+		log.Printf("FUCKING PAYLOAD %s", err)
 	}
 
-	c.Broadcast(ctx, "message", payload)
+	c.Broadcast(ctx, "message", gosock.M{
+		"msg":    msg.Msg,
+		"userId": userId,
+	})
+
+	// c.Reply(ctx, "howdy", gosock.M{
+	// 	"yes": msg.Hello,
+	// })
 
 	return nil
 }
@@ -64,10 +79,10 @@ func (tr *TestRouter) Disconnect(ctx context.Context, c *gosock.Channel) error {
 	log.Printf("Disconnected from channel %d", userId)
 
 	payload := gosock.M{
-		"connId": userId,
+		"id": userId,
 	}
 
-	c.Broadcast(ctx, "user-disconnect", payload)
+	c.Emit("user-disconnect", payload)
 
 	return nil
 }

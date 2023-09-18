@@ -26,6 +26,8 @@ type Hub struct {
 	middlewares []Middleware
 
 	handle http.HandlerFunc
+
+	channelCache map[string]*Channel
 }
 
 func NewHub(pool *Pool) *Hub {
@@ -37,9 +39,17 @@ func NewHub(pool *Pool) *Hub {
 		handlers:    make(map[string]ConnectionHandler),
 		pool:        pool,
 		middlewares: []Middleware{},
+
+		channelCache: make(map[string]*Channel),
 	}
 
 	return hub
+}
+
+func newParam() interface{} {
+	params := &Params{}
+
+	return params
 }
 
 func (h *Hub) Use(middlewares ...Middleware) {
@@ -114,23 +124,29 @@ func (h *Hub) handleConnect(conn *Conn) {
 }
 
 func (h *Hub) handleMessage(conn *Conn, msg *Message) {
-	node, params := h.channels.Lookup(msg.Channel)
-
-	if node == nil || node.Channel == nil {
-		log.Printf("Channel not found %s", msg.Channel)
-		return
-	}
-
-	metaChannel := node.Channel
-	channel, ok := metaChannel.channels[msg.Channel]
+	channel, ok := h.channelCache[msg.Channel]
 
 	if !ok {
-		channel = metaChannel.addChannel(msg.Channel, params)
+		log.Printf("Channel not cached %s", msg.Channel)
+		node, params := h.channels.Lookup(msg.Channel)
+
+		if node == nil || node.Channel == nil {
+			log.Printf("Channel not found %s", msg.Channel)
+			return
+		}
+
+		router := node.Channel
+		channel, ok = router.channels[msg.Channel]
+
+		if !ok {
+			channel = router.addChannel(msg.Channel, params)
+			// This needs to be cleared at some point
+			h.channelCache[msg.Channel] = channel
+		}
 	}
 
 	ctx := withConnection(conn.ctx, conn)
 
-	// switch msg.Event {
 	switch msg.Event {
 	case joinEventName:
 		channel.handleJoin(ctx, msg)
@@ -139,7 +155,7 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 		channel.handleLeave(ctx, msg)
 
 	default:
-		handler, ok := metaChannel.handlers[msg.Event]
+		handler, ok := channel.router.handlers[msg.Event]
 
 		if !ok {
 			log.Printf("Channel does not have handler for event %s", msg.Event)

@@ -53,7 +53,9 @@ func (c *Conn) close() {
 	c.conn.Close()
 
 	for ch := range c.channels {
-		ch.handleDisconnect(c)
+		c.hub.pool.Schedule(func() {
+			ch.handleDisconnect(c)
+		})
 	}
 
 	c.hub.disconnect <- c

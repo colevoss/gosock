@@ -41,7 +41,6 @@ func TestLookup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			// match, params := tree.Lookup(tt.testPath)
 			match, params := tree.Lookup(tt.testPath)
 
 			if match == nil || match.Channel == nil {

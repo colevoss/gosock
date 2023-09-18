@@ -43,9 +43,14 @@ func (c *Channel) Params() *Params {
 }
 
 func (c *Channel) Param(key string) (string, bool) {
+	if c.params == nil {
+		return "", false
+	}
+
 	return c.params.Get(key)
 }
 
+// func newChannel(path string, params *Params, router *Router) *Channel {
 func newChannel(path string, params *Params, router *Router) *Channel {
 	return &Channel{
 		path:        path,
@@ -249,13 +254,13 @@ func (c *Channel) handleLeave(ctx context.Context, msg *Message) {
 }
 
 func (c *Channel) handleDisconnect(conn *Conn) {
+	c.removeConnection(conn)
+
 	handler, ok := c.router.routerHandlers[disconnectEventName]
 
 	if ok {
 		handler(conn.ctx, c)
 	}
-
-	c.removeConnection(conn)
 }
 
 func (c *Channel) addConnection(conn *Conn) {
