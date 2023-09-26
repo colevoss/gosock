@@ -15,8 +15,9 @@ import (
 var connId = 0
 
 type Conn struct {
-	Id string
 	sync.RWMutex
+
+	Id string
 
 	conn net.Conn
 	hub  *Hub
@@ -49,10 +50,13 @@ func newConn(ctx context.Context, conn net.Conn, hub *Hub) *Conn {
 }
 
 func (c *Conn) close() {
-	log.Printf("Closing connection %s", c.Id)
 	c.conn.Close()
 
-	for ch := range c.channels {
+	c.RLock()
+	chans := c.channels
+	c.RUnlock()
+
+	for ch := range chans {
 		c.hub.pool.Schedule(func() {
 			ch.handleDisconnect(c)
 		})
@@ -84,7 +88,6 @@ func (c *Conn) read() {
 		}
 
 		if hdr.OpCode == ws.OpClose {
-			log.Printf("Closing code received %s", c.Id)
 			return
 		}
 
@@ -115,6 +118,20 @@ func (c *Conn) sendRaw(msg []byte) {
 	if err != nil {
 		log.Printf("Error sending raw message %s", err)
 	}
+}
+
+func (c *Conn) addChannel(channel *Channel) {
+	c.Lock()
+	defer c.Unlock()
+
+	c.channels[channel] = true
+}
+
+func (c *Conn) removeChannel(channel *Channel) {
+	c.Lock()
+	defer c.Unlock()
+
+	delete(c.channels, channel)
 }
 
 type ConnectionMap struct {

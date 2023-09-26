@@ -82,3 +82,11 @@ func (r *Router) addChannel(path string, params *Params) *Channel {
 
 	return channel
 }
+
+func (r *Router) removeChannel(path string) {
+	r.Lock()
+	defer r.Unlock()
+
+	delete(r.channels, path)
+	r.hub.removeCachedChannel(path)
+}

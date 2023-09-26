@@ -3,6 +3,7 @@ package gosock
 import (
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gobwas/ws"
 )
@@ -14,10 +15,12 @@ type ServerEventInit func(hub *Hub)
 type Middleware func(http.HandlerFunc) http.HandlerFunc
 
 type Hub struct {
+	sync.RWMutex
+
 	pool *Pool
 
-	channels    *Node // value is meta channels
-	connections *ConnectionMap
+	channels *Node // value is meta channels
+	conns    map[*Conn]bool
 
 	connect    chan *Conn
 	disconnect chan *Conn
@@ -28,12 +31,14 @@ type Hub struct {
 	handle http.HandlerFunc
 
 	channelCache map[string]*Channel
+
+	producerManager ProducerManager
 }
 
 func NewHub(pool *Pool) *Hub {
 	hub := &Hub{
 		channels:    NewTree(),
-		connections: newConnectionMap(),
+		conns:       make(map[*Conn]bool),
 		connect:     make(chan *Conn),
 		disconnect:  make(chan *Conn),
 		handlers:    make(map[string]ConnectionHandler),
@@ -43,13 +48,16 @@ func NewHub(pool *Pool) *Hub {
 		channelCache: make(map[string]*Channel),
 	}
 
+	hub.AddProducerManager(&BaseProducerManager{})
+
 	return hub
 }
 
-func newParam() interface{} {
-	params := &Params{}
+func (h *Hub) AddProducerManager(manager ProducerManager) {
+	h.Lock()
+	defer h.Unlock()
 
-	return params
+	h.producerManager = manager
 }
 
 func (h *Hub) Use(middlewares ...Middleware) {
@@ -104,11 +112,11 @@ func (h *Hub) run() {
 	for {
 		select {
 		case c := <-h.connect:
-			h.connections.add(c)
+			h.addConn(c)
 			h.handleConnect(c)
 
 		case c := <-h.disconnect:
-			h.connections.del(c)
+			h.removeConn(c)
 		}
 	}
 }
@@ -121,6 +129,29 @@ func (h *Hub) handleConnect(conn *Conn) {
 	}
 
 	go handler(conn)
+}
+
+func (h *Hub) Send(path string, event string, payload interface{}) {
+	channel, ok := h.channelCache[path]
+
+	if !ok {
+		node, _ := h.channels.Lookup(path)
+
+		if node == nil || node.Channel == nil {
+			log.Printf("Channel not found %s", path)
+			return
+		}
+
+		router := node.Channel
+		channel, ok = router.channels[path]
+
+		if !ok {
+			log.Printf("Channel does not exist in router %s", path)
+			return
+		}
+	}
+
+	channel.Emit(event, payload)
 }
 
 func (h *Hub) handleMessage(conn *Conn, msg *Message) {
@@ -141,7 +172,9 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 		if !ok {
 			channel = router.addChannel(msg.Channel, params)
 			// This needs to be cleared at some point
+			h.Lock()
 			h.channelCache[msg.Channel] = channel
+			h.Unlock()
 		}
 	}
 
@@ -162,7 +195,8 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 			return
 		}
 
-		if hasConn := channel.connections.has(conn); !hasConn {
+		// if hasConn := channel.connections.has(conn); !hasConn {
+		if hasConn := channel.hasConn(conn); !hasConn {
 			log.Printf("Connection %s does not exist in channel %s", conn.Id, msg.Channel)
 			return
 		}
@@ -170,6 +204,14 @@ func (h *Hub) handleMessage(conn *Conn, msg *Message) {
 		ctx := withMessage(ctx, msg)
 		handler(ctx, channel)
 	}
+}
+
+func (h *Hub) removeCachedChannel(path string) {
+	h.Lock()
+	defer h.Unlock()
+	log.Printf("Removing cached channel %s", path)
+
+	delete(h.channelCache, path)
 }
 
 func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
@@ -186,4 +228,25 @@ func (h *Hub) handler(w http.ResponseWriter, r *http.Request) {
 	h.connect <- c
 
 	go c.read()
+}
+
+func (h *Hub) addConn(conn *Conn) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.conns[conn] = true
+}
+
+func (h *Hub) removeConn(conn *Conn) {
+	h.Lock()
+	defer h.Unlock()
+	log.Printf("Removing connection")
+
+	delete(h.conns, conn)
+}
+
+func newParam() interface{} {
+	params := &Params{}
+
+	return params
 }

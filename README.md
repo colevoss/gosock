@@ -26,3 +26,6 @@ Outgoing messages are shaped the same way.
 ## Todo
 - [x] Fix channel names with ending params `channel.{id}`
 - [ ] Add more configuration for servers
+- [ ] Close channel when last connection leaves
+- [ ] Figure out Producer based broadcast/emit
+- [ ] Recover from panics in pool

@@ -33,4 +33,18 @@ type Response struct {
 	Payload interface{} `json:"payload"`
 }
 
+func (response Response) MarshalBinary() ([]byte, error) {
+	return json.Marshal(response)
+}
+
+func ResponseFromBytes(data []byte) (*Response, error) {
+	var response Response
+
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, err
+	}
+
+	return &response, nil
+}
+
 type M map[string]interface{}

@@ -1,17 +1,20 @@
 package gosock
 
 import (
+	"log"
+	"sync/atomic"
 	"time"
 )
 
 type PoolTask func()
 
 type Pool struct {
-	jobs        chan PoolTask
-	sem         chan struct{}
-	maxPools    int
-	ttl         time.Duration
-	workerCount int
+	jobs     chan PoolTask
+	sem      chan struct{}
+	maxPools int
+	ttl      time.Duration
+
+	workerCount int32
 }
 
 func NewPool(queue, maxPools int, ttl time.Duration) *Pool {
@@ -26,7 +29,7 @@ func NewPool(queue, maxPools int, ttl time.Duration) *Pool {
 	}
 }
 
-func (p *Pool) WorkerCount() int {
+func (p *Pool) WorkerCount() int32 {
 	count := p.workerCount
 
 	return count
@@ -38,7 +41,6 @@ func (p *Pool) Schedule(task PoolTask) {
 	case p.sem <- struct{}{}:
 		// Spawn new go routine
 		go p.workTimeout(task)
-		p.workerCount++
 	default:
 		// Otherwise just queue the task
 		p.jobs <- task
@@ -52,12 +54,16 @@ func (p *Pool) release() {
 type PoolHandlerInit func(*Pool)
 
 func (p *Pool) close() {
-	p.workerCount--
+	id := p.workerCount
+	atomic.AddInt32(&p.workerCount, -1)
+	log.Printf("Closing worker %d", id)
 	p.release()
 }
 
 func (p *Pool) workTimeout(task PoolTask) {
 	defer p.close()
+	atomic.AddInt32(&p.workerCount, 1)
+	log.Printf("Opening worker %d", p.workerCount)
 
 	task()
 
