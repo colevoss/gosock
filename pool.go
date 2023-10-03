@@ -8,6 +8,8 @@ import (
 
 type PoolTask func()
 
+type PanicHandler func(interface{})
+
 type Pool struct {
 	jobs     chan PoolTask
 	sem      chan struct{}
@@ -15,6 +17,8 @@ type Pool struct {
 	ttl      time.Duration
 
 	workerCount int32
+
+	panicHandler PanicHandler
 }
 
 func NewPool(queue, maxPools int, ttl time.Duration) *Pool {
@@ -33,6 +37,10 @@ func (p *Pool) WorkerCount() int32 {
 	count := p.workerCount
 
 	return count
+}
+
+func (p *Pool) OnPanic(handler PanicHandler) {
+	p.panicHandler = handler
 }
 
 func (p *Pool) Schedule(task PoolTask) {
@@ -61,8 +69,19 @@ func (p *Pool) close() {
 }
 
 func (p *Pool) workTimeout(task PoolTask) {
-	defer p.close()
 	atomic.AddInt32(&p.workerCount, 1)
+
+	defer p.close()
+	defer func() {
+		if p.panicHandler == nil {
+			return
+		}
+
+		if r := recover(); r != nil {
+			p.panicHandler(r)
+		}
+	}()
+
 	log.Printf("Opening worker %d", p.workerCount)
 
 	task()

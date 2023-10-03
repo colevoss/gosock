@@ -19,18 +19,18 @@ func NewChatRouter(db *db.Db) *ChatRouter {
 func (tr *ChatRouter) Join(ctx context.Context, c *gosock.Channel) error {
 	userId, _ := UserId(ctx)
 
-	c.TestProd(ctx, "balls", gosock.M{
-		"hello":  "Test",
+	// c.Emit(ctx, "balls", gosock.J{
+	// 	"hello":  "Test",
+	// 	"userId": userId,
+	// })
+
+	c.Broadcast(ctx, "user-joined", gosock.J{
 		"userId": userId,
 	})
 
-	// c.Broadcast(ctx, "user-joined", gosock.M{
-	// 	"userId": userId,
-	// })
-	//
-	// c.Reply(ctx, "welcome", gosock.M{
-	// 	"userId": userId,
-	// })
+	c.Reply(ctx, "welcome", gosock.J{
+		"userId": userId,
+	})
 
 	return nil
 }
@@ -48,7 +48,7 @@ func (cr *ChatRouter) Chat(ctx context.Context, c *gosock.Channel) error {
 		log.Printf("Malformed payload %s", err)
 	}
 
-	c.Broadcast(ctx, "message", gosock.M{
+	c.Broadcast(ctx, "message", gosock.J{
 		"message": msg.Message,
 		"userId":  userId,
 	})
@@ -63,7 +63,7 @@ func (cr *ChatRouter) Disconnected(ctx context.Context, c *gosock.Channel) error
 	// 	"userId": userId,
 	// })
 
-	c.TestProd(ctx, "user-disconnected", gosock.M{
+	c.Emit(ctx, "user-disconnected", gosock.J{
 		"userId": userId,
 	})
 

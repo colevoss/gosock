@@ -24,6 +24,9 @@ func main() {
 	chatRouter := chat.NewChatRouter(db)
 
 	pool := gosock.NewPool(10, 10, time.Second*60)
+	pool.OnPanic(func(err interface{}) {
+		log.Printf("Fuck %v", err)
+	})
 
 	server := gosock.NewHub(pool)
 	redisManager := &producers.RedisManager{}

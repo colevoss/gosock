@@ -1,6 +1,7 @@
 package gosock
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"sync"
@@ -131,7 +132,7 @@ func (h *Hub) handleConnect(conn *Conn) {
 	go handler(conn)
 }
 
-func (h *Hub) Send(path string, event string, payload interface{}) {
+func (h *Hub) Send(ctx context.Context, path string, event string, payload interface{}) {
 	channel, ok := h.channelCache[path]
 
 	if !ok {
@@ -151,7 +152,7 @@ func (h *Hub) Send(path string, event string, payload interface{}) {
 		}
 	}
 
-	channel.Emit(event, payload)
+	channel.Emit(ctx, event, payload)
 }
 
 func (h *Hub) handleMessage(conn *Conn, msg *Message) {

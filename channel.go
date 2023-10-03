@@ -1,22 +1,10 @@
 package gosock
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"log"
 	"sync"
-
-	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsutil"
-)
-
-type chanMessageType int
-
-const (
-	sendType chanMessageType = iota
-	broadcastType
-	replyType
 )
 
 // Used to compare if two connections are the same
@@ -24,13 +12,6 @@ type ConnComparator func(*Conn, *Conn) bool
 
 func defaultConnComparator(connA *Conn, connB *Conn) bool {
 	return connA == connB
-}
-
-type channelMessage struct {
-	conn    *Conn
-	msg     []byte
-	msgType chanMessageType
-	r       *Response
 }
 
 type Channel struct {
@@ -42,7 +23,7 @@ type Channel struct {
 	hub *Hub
 
 	router *Router
-	send   chan *channelMessage
+	send   chan *ChannelMessage
 
 	conns map[*Conn]bool
 
@@ -74,7 +55,7 @@ func newChannel(path string, params *Params, router *Router) *Channel {
 		path:   path,
 		params: params,
 		router: router,
-		send:   make(chan *channelMessage, 1),
+		send:   make(chan *ChannelMessage, 1),
 
 		hub: router.hub,
 
@@ -89,26 +70,22 @@ func newChannel(path string, params *Params, router *Router) *Channel {
 	return channel
 }
 
-func (c *Channel) TestProd(ctx context.Context, event string, payload interface{}) {
+func (c *Channel) Emit(ctx context.Context, event string, payload interface{}) error {
 	response := &Response{
 		Channel: c.path,
 		Event:   event,
 		Payload: payload,
 	}
 
-	c.producer.Publish(context.Background(), response)
+	return c.producer.Publish(context.Background(), EmitChannelMsg(GetConnection(ctx), response))
 }
 
-func (c *Channel) Reply(ctx context.Context, event string, payload interface{}) {
+func (c *Channel) Reply(ctx context.Context, event string, payload interface{}) error {
 	conn := GetConnection(ctx)
 
 	if conn == nil {
-		return
+		return errors.New("No connection available to reply to")
 	}
-
-	var buf bytes.Buffer
-	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
-	encoder := json.NewEncoder(w)
 
 	response := &Response{
 		Channel: c.path,
@@ -116,39 +93,26 @@ func (c *Channel) Reply(ctx context.Context, event string, payload interface{}) 
 		Payload: payload,
 	}
 
-	if err := encoder.Encode(response); err != nil {
-		return
-	}
+	// Do not need to publish out to producer since its only responding to this connection
+	c.sendMsg(ReplyChannelMsg(conn, response))
 
-	if err := w.Flush(); err != nil {
-		return
-	}
+	return nil
 
-	chanMessage := &channelMessage{
-		conn:    conn,
-		msgType: replyType,
-		msg:     buf.Bytes(),
-	}
-
-	c.sendMsg(chanMessage)
+	// return c.producer.Publish(context.Background(), ReplyChannelMsg(conn, response))
 }
 
 func (c *Channel) ReplyErr(ctx context.Context, err error) {
-	c.Reply(ctx, "error", M{
+	c.Reply(ctx, "error", J{
 		"error": err.Error(),
 	})
 }
 
-func (c *Channel) Broadcast(ctx context.Context, event string, payload interface{}) {
+func (c *Channel) Broadcast(ctx context.Context, event string, payload interface{}) error {
 	conn := GetConnection(ctx)
 
-	if conn == nil {
-		return
-	}
-
-	var buf bytes.Buffer
-	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
-	encoder := json.NewEncoder(w)
+	// if conn == nil {
+	// 	return
+	// }
 
 	response := &Response{
 		Channel: c.path,
@@ -156,106 +120,50 @@ func (c *Channel) Broadcast(ctx context.Context, event string, payload interface
 		Payload: payload,
 	}
 
-	if err := encoder.Encode(response); err != nil {
-		return
-	}
-
-	if err := w.Flush(); err != nil {
-		return
-	}
-
-	chanMessage := &channelMessage{
-		conn:    conn,
-		msgType: broadcastType,
-		msg:     buf.Bytes(),
-		r:       response,
-	}
-
-	c.sendMsg(chanMessage)
-	// c.send <- chanMessage
+	return c.producer.Publish(context.Background(), BroadcastChannelMsg(conn, response))
 }
 
+// Sends response to all connections on channel without publishing to producer
 func (c *Channel) SendResp(response *Response) {
-	var buf bytes.Buffer
-	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
-	encoder := json.NewEncoder(w)
-
-	if err := encoder.Encode(response); err != nil {
-		return
-	}
-
-	if err := w.Flush(); err != nil {
-		return
-	}
-
-	chanMessage := &channelMessage{
-		msgType: sendType,
-		msg:     buf.Bytes(),
-		r:       response,
+	chanMessage := &ChannelMessage{
+		Type:     emitType,
+		Response: response,
 	}
 
 	c.sendMsg(chanMessage)
-	// c.send <- chanMessage
 }
 
-func (c *Channel) Emit(event string, payload interface{}) {
-	var buf bytes.Buffer
-	w := wsutil.NewWriter(&buf, ws.StateServerSide, ws.OpText)
-	encoder := json.NewEncoder(w)
-
-	response := &Response{
-		Channel: c.path,
-		Event:   event,
-		Payload: payload,
-	}
-
-	if err := encoder.Encode(response); err != nil {
-		return
-	}
-
-	if err := w.Flush(); err != nil {
-		return
-	}
-
-	chanMessage := &channelMessage{
-		msgType: sendType,
-		msg:     buf.Bytes(),
-		r:       response,
-	}
-
-	c.sendMsg(chanMessage)
-	// c.send <- chanMessage
+func (c *Channel) Write(msg *ChannelMessage) {
+	c.sendMsg(msg)
 }
 
-func (c *Channel) Write(data []byte) {
-	c.sendMsg(
-		&channelMessage{
-			msgType: sendType,
-			msg:     data,
-		},
-	)
-}
-
-func (c *Channel) sendMsg(msg *channelMessage) {
+func (c *Channel) sendMsg(msg *ChannelMessage) {
 	c.wg.Add(1)
 	c.send <- msg
 }
 
 func (c *Channel) close() {
 	c.wg.Wait()
-	log.Printf("Closing channel %s", c.path)
 	close(c.send)
+
 	c.producer.Stop()
+
 	c.router.removeChannel(c.path)
 }
 
+/**
+ * Ran in a go routine to control the flow of messages to channel
+ * connections by looping the `send` channel and handling outgoing
+ * messages one-by-one
+ */
 func (c *Channel) writer() {
 	for msg := range c.send {
 		c.wg.Done()
-		msgPayload := msg.msg
+		// TODO: Handle error
+		msgPayload, _ := msg.Response.Encode()
 		msgConn := msg.conn
 
-		if msg.msgType == replyType && msgConn != nil {
+		if msg.Type == replyType && msgConn != nil {
 			c.hub.pool.Schedule(func() {
 				msgConn.sendRaw(msgPayload)
 			})
@@ -272,7 +180,7 @@ func (c *Channel) writer() {
 				continue connWalk
 			}
 
-			if msg.msgType == broadcastType && c.compareConnections(conn, msgConn) {
+			if msg.Type == broadcastType && msgConn != nil && c.compareConnections(conn, msgConn) {
 				continue connWalk
 			}
 

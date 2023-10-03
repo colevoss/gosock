@@ -75,12 +75,15 @@ func (rp *RedisProducer) subscribe() {
 	}
 }
 
-func (rp *RedisProducer) Publish(ctx context.Context, response *gosock.Response) {
-	pub := rp.manager.rdb.Publish(ctx, response.Channel, response)
+func (rp *RedisProducer) Publish(ctx context.Context, msg *gosock.ChannelMessage) error {
+	// For now just trying sending the response payload
+	// TODO: Need to try sending ChannelMessage as payload
+	pub := rp.manager.rdb.Publish(ctx, msg.Response.Channel, msg.Response)
 
-	err := pub.Err()
-
-	if err != nil {
-		log.Printf("Error sending msg to redis channel %+v %s", response, err)
+	if err := pub.Err(); err != nil {
+		log.Printf("Error sending msg to redis channel %+v %s", msg, err)
+		return err
 	}
+
+	return nil
 }

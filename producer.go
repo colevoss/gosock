@@ -4,7 +4,7 @@ import "context"
 
 type Producer interface {
 	Subscribe()
-	Publish(ctx context.Context, path *Response)
+	Publish(ctx context.Context, msg *ChannelMessage) error
 	Stop()
 }
 

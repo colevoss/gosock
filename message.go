@@ -1,6 +1,8 @@
 package gosock
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 const (
 	joinEventName       = "__join__"
@@ -16,35 +18,27 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-func (bm *Message) RawPayload() (map[string]interface{}, error) {
+func (m *Message) RawPayload() (map[string]interface{}, error) {
 	var p map[string]interface{}
-	err := json.Unmarshal(bm.Payload, &p)
+	err := json.Unmarshal(m.Payload, &p)
 
 	return p, err
 }
 
-func (bm *Message) BindPayload(p interface{}) error {
-	return json.Unmarshal(bm.Payload, p)
+func (m *Message) BindPayload(p interface{}) error {
+	return json.Unmarshal(m.Payload, p)
 }
 
-type Response struct {
-	Channel string      `json:"channel"`
-	Event   string      `json:"event"`
-	Payload interface{} `json:"payload"`
+func (m Message) MarshalBinary() ([]byte, error) {
+	return json.Marshal(m)
 }
 
-func (response Response) MarshalBinary() ([]byte, error) {
-	return json.Marshal(response)
-}
+func MessageFromBytes(data []byte) (*Message, error) {
+	var message Message
 
-func ResponseFromBytes(data []byte) (*Response, error) {
-	var response Response
-
-	if err := json.Unmarshal(data, &response); err != nil {
+	if err := json.Unmarshal(data, &message); err != nil {
 		return nil, err
 	}
 
-	return &response, nil
+	return &message, nil
 }
-
-type M map[string]interface{}
